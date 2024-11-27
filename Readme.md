@@ -54,22 +54,75 @@ Notice the `dynamicPages` configuration. This package will populate the `limitTo
 
 `dynamicPages` has three possible properties.
 
+### `withCType`
+
+Can be either:
+- A string or an array of `withCType` values that will find all pages containing content elements with given CType.
+- A configuration object for more specific matching:
+```yaml
+withCType:
+  identifiers:
+    - my_special_type
+  flexFormRestrictions:
+    - field: settings.someField
+      value: '1'
+```
+
+The `flexFormRestrictions` allow you to find only content elements where specific FlexForm fields match certain values.
+
 ### `withPlugin`
 
-Can be a string or an array of `tt_content.list_type` values. Will find all pages that contain at least one of the given plugins.
+Can be either:
+- A string or an array of `tt_content.list_type` values that will find all pages containing at least one of the given plugins.
+- A configuration object for more specific matching:
+```yaml
+withPlugin:
+  identifiers:
+    - news_pi1
+  flexFormRestrictions:
+    - field: settings.eventRestriction
+      value: '1'
+```
+
+Multiple FlexForm restrictions can be defined and will be combined with AND logic:
+```yaml
+withPlugin:
+  identifiers:
+    - news_pi1
+  flexFormRestrictions:
+    - field: settings.eventRestriction
+      value: '1'
+    - field: settings.archiveRestriction
+      value: 'active'
+```
+
+This is particularly useful when you need to distinguish between different plugin configurations on your pages. For example, you might want different routing rules for news plugins that show events versus those that show regular news items.
 
 ### `containsModule`
 
 Can be a string or an array of `pages.module` values. Will find all pages that have "Contains Plugin" set to one of the given values.
 
-### `withSwitchableControllerAction`
+### `withDoktypes`
 
 Can be a string or an array of `switchableControllerActions` values. Will find all pages that contain plugins with the given action configured.
 
-### `withCType`
+## Examples
 
-Can be a string or an array of `withCType` values. Will find all pages that contain content element with given CType.
+Here are some practical examples of using FlexForm restrictions:
 
-### `withDoktypes`
-
-Can be an integer or an array of `withDoktypes` values. Will find all pages with given doktype.
+```yaml
+routeEnhancers:
+  EventNews:
+    type: Extbase
+    dynamicPages:
+      withPlugin:
+        identifiers:
+          - news_pi1
+        flexFormRestrictions:
+          - field: settings.eventRestriction
+            value: '1'
+    extension: News
+    plugin: Pi1
+    routes:
+       …
+```

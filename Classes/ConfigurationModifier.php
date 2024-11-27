@@ -1,13 +1,19 @@
 <?php
+
 declare(strict_types=1);
+
 namespace Smic\DynamicRoutingPages;
 
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\QueryBuilder;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 class ConfigurationModifier
 {
+    /**
+     * @var array<string, array<int>>
+     */
     protected static $cache = [];
 
     public static function modifyConfiguration(array $configuration): array
@@ -37,6 +43,12 @@ class ConfigurationModifier
     protected static function findDynamicPages(array $dynamicPagesConfiguration): array
     {
         $pageUids = [];
+        if (isset($dynamicPagesConfiguration['withCType'])) {
+            $withCType = is_array($dynamicPagesConfiguration['withCType']) ? $dynamicPagesConfiguration['withCType'] : [$dynamicPagesConfiguration['withCType']];
+            $withCTypeCacheKey = sha1(json_encode($withCType));
+            self::$cache[$withCTypeCacheKey] = self::$cache[$withCTypeCacheKey] ?? self::findPagesWithCType($withCType);
+            array_push($pageUids, ...self::$cache[$withCTypeCacheKey]);
+        }
         if (isset($dynamicPagesConfiguration['withPlugin'])) {
             $withPlugins = is_array($dynamicPagesConfiguration['withPlugin']) ? $dynamicPagesConfiguration['withPlugin'] : [$dynamicPagesConfiguration['withPlugin']];
             $withPluginsCacheKey = sha1(json_encode($withPlugins));
@@ -55,50 +67,45 @@ class ConfigurationModifier
             self::$cache[$containsModulesCacheKey] = self::$cache[$containsModulesCacheKey] ?? self::findPagesContainingModules($containsModules);
             array_push($pageUids, ...self::$cache[$containsModulesCacheKey]);
         }
-        if (isset($dynamicPagesConfiguration['withSwitchableControllerAction'])) {
-            $withSwitchableControllerActions = is_array($dynamicPagesConfiguration['withSwitchableControllerAction']) ? $dynamicPagesConfiguration['withSwitchableControllerAction'] : [$dynamicPagesConfiguration['withSwitchableControllerAction']];
-            $withSwitchableControllerActionsCacheKey = sha1(json_encode($withSwitchableControllerActions));
-            self::$cache[$withSwitchableControllerActionsCacheKey] = self::$cache[$withSwitchableControllerActionsCacheKey] ?? self::findPagesWithSwitchableControllerActions($withSwitchableControllerActions);
-            array_push($pageUids, ...self::$cache[$withSwitchableControllerActionsCacheKey]);
-        }
-        if (isset($dynamicPagesConfiguration['withCType'])) {
-            $withCType = is_array($dynamicPagesConfiguration['withCType']) ? $dynamicPagesConfiguration['withCType'] : [$dynamicPagesConfiguration['withCType']];
-            $withCTypeCacheKey = sha1(json_encode($withCType));
-            self::$cache[$withCTypeCacheKey] = self::$cache[$withCTypeCacheKey] ?? self::findPagesWithCType($withCType);
-            array_push($pageUids, ...self::$cache[$withCTypeCacheKey]);
-        }
+
         return array_unique($pageUids);
     }
 
-    protected static function findPagesWithPlugins(array $withPlugins): array
+    protected static function findPagesWithCType(array $configuration): array
     {
+        [$types, $flexFormRestrictions] = self::extractPluginConfiguration($configuration);
         $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
-        $contentElementRecords = $queryBuilder
+        $queryBuilder = $queryBuilder
+            ->select('pid')
+            ->from('tt_content')
+            ->where(
+                $queryBuilder->expr()->in('CType', $queryBuilder->createNamedParameter($types, Connection::PARAM_STR_ARRAY))
+            );
+        if (!empty($flexFormRestrictions)) {
+            self::addFlexFormRestrictions($queryBuilder, $flexFormRestrictions);
+        }
+
+        return $queryBuilder->executeQuery()
+            ->fetchFirstColumn();
+    }
+
+    protected static function findPagesWithPlugins(array $configuration): array
+    {
+        [$types, $flexFormRestrictions] = self::extractPluginConfiguration($configuration);
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
+        $queryBuilder = $queryBuilder
             ->select('pid')
             ->from('tt_content')
             ->where(
                 $queryBuilder->expr()->eq('CType', $queryBuilder->createNamedParameter('list', Connection::PARAM_STR)),
-                $queryBuilder->expr()->in('list_type', $queryBuilder->createNamedParameter($withPlugins, Connection::PARAM_STR_ARRAY))
-            )
-            ->executeQuery()
-            ->fetchFirstColumn();
-        return $contentElementRecords;
-    }
-
-    protected static function findPagesWithSwitchableControllerActions(array $withSwitchableControllerActions): array
-    {
-        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
-        $constraints = [];
-        foreach ($withSwitchableControllerActions as $withSwitchableControllerAction) {
-            $constraints[] = $queryBuilder->expr()->like('pi_flexform', $queryBuilder->createNamedParameter('%>' . htmlentities($withSwitchableControllerAction) . '<%', \PDO::PARAM_STR));
+                $queryBuilder->expr()->in('list_type', $queryBuilder->createNamedParameter($types, Connection::PARAM_STR_ARRAY))
+            );
+        if (!empty($flexFormRestrictions)) {
+            self::addFlexFormRestrictions($queryBuilder, $flexFormRestrictions);
         }
-        $contentElementRecords = $queryBuilder
-            ->select('pid')
-            ->from('tt_content')
-            ->where($queryBuilder->expr()->or(...$constraints))
-            ->executeQuery()
+
+        return $queryBuilder->executeQuery()
             ->fetchFirstColumn();
-        return $contentElementRecords;
     }
 
     protected static function findPagesContainingModules(array $modules): array
@@ -112,6 +119,7 @@ class ConfigurationModifier
             )
             ->executeQuery()
             ->fetchFirstColumn();
+
         return $pageRecords;
     }
 
@@ -130,20 +138,62 @@ class ConfigurationModifier
             )
             ->executeQuery()
             ->fetchFirstColumn();
+
         return $pageRecords;
     }
 
-    protected static function findPagesWithCType(array $withCType): array
+    protected static function extractPluginConfiguration(array $configuration): array
     {
-        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
-        $contentElementRecords = $queryBuilder
-            ->select('pid')
-            ->from('tt_content')
-            ->where(
-                $queryBuilder->expr()->in('CType', $queryBuilder->createNamedParameter($withCType, Connection::PARAM_STR_ARRAY))
-            )
-            ->executeQuery()
-            ->fetchFirstColumn();
-        return $contentElementRecords;
+        /**
+         * Configuration is either more complex with flexFormRestrictions:
+         *
+         * withCType:
+         *   identifiers:
+         *     - news_pi1
+         *   flexFormRestrictions:
+         *     - field: settings.eventRestriction
+         *     value: '1'
+         *
+         * or a simple string or list of CType identifiers:
+         *
+         * withCType: news_pi1
+         */
+        $types = $configuration;
+        $flexFormRestrictions = [];
+        if (isset($configuration['types'])) {
+            $types = $configuration['types'];
+            $flexFormRestrictions = $configuration['flexFormRestrictions'] ?? [];
+        }
+
+        return [$types, $flexFormRestrictions];
+    }
+
+    protected static function addFlexFormRestrictions(QueryBuilder $queryBuilder, array $flexFormRestrictions): void
+    {
+        $constraints = [];
+        foreach ($flexFormRestrictions as $restriction) {
+            if (!isset($restriction['field']) || !isset($restriction['value'])) {
+                continue;
+            }
+
+            $xmlPattern = self::buildFlexFormXmlPattern(
+                $restriction['field'],
+                $restriction['value']
+            );
+            $constraints[] = $queryBuilder->expr()->like(
+                'pi_flexform',
+                $queryBuilder->createNamedParameter($xmlPattern, Connection::PARAM_STR)
+            );
+        }
+
+        if (!empty($constraints)) {
+            $queryBuilder->andWhere(...$constraints);
+        }
+    }
+
+    protected static function buildFlexFormXmlPattern(string $fieldPath, string $value): string
+    {
+        return '%<field index="' . $fieldPath . '">%'
+            . '<value index="vDEF">' . $value . '</value>%';
     }
 }
